@@ -1,192 +1,213 @@
-// backend/routes/businesses.js
+// oleg bergin stefani kazmirchuk
 const express = require("express");
 const router = express.Router();
-
-// --- CHANGE 1: Use the promise-based connection ---
-// Get the promise-based connection object for async/await support.
 const db = require("../dbSingleton").getPromise();
 
-/* ───────────────────────────────
-   1. Create a new business (POST /api/businesses)
-   Refactored with async/await.
-   ─────────────────────────────── */
-router.post("/", async (req, res) => { // <-- Add async
-  const {
-    name, category, description, phone, email, address, image_url = "", opening_hours = "",
+// הוספת עסק חדש
+// Add a new business
+router.post("/", async (req, res) => {
+  let {
+    name,
+    category,
+    description,
+    location,
+    phone,
+    photos = "[]",
+    schedule = null, // ברירת מחדל: null
+    email = null, // default: null
+    owner_id = null,
   } = req.body;
 
+  // אם נשלח ריק – תהפוך ל־null (כדי למנוע שגיאת constraint)
+  // If sent as empty string, set to null (to avoid constraint error)
+  if (!schedule || schedule === "") schedule = null;
+  if (!email || email === "") email = null;
+
   const sql = `
-    INSERT INTO businesses (name, category, description, phone, email, address, image_url, opening_hours)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO businesses (name, category, description, location, phone, photos, schedule, email, owner_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
-  const params = [name, category, description, phone, email, address, image_url, opening_hours];
+  const params = [
+    name,
+    category,
+    description,
+    location,
+    phone,
+    photos,
+    schedule,
+    email,
+    owner_id,
+  ];
 
   try {
-    // --- CHANGE 2: Use await and a try...catch block ---
-    const [result] = await db.query(sql, params); // <-- Use await
-    res.status(201).json({ id: result.insertId, message: "Business created" });
+    const [result] = await db.query(sql, params);
+    // מחזיר ללקוח את פרטי העסק החדש
+    // Return new business data to client
+    res.status(201).json({
+      business_id: result.insertId,
+      name,
+      category,
+      description,
+      location,
+      phone,
+      photos,
+      schedule,
+      email,
+      owner_id,
+      message: "Business created",
+    });
   } catch (err) {
+    // שגיאה ביצירת עסק
+    // Error creating business
     console.error("DB error creating business:", err);
     res.status(500).json({ error: "Failed to create business." });
   }
 });
 
-/* ───────────────────────────────
-   2. Get unique categories (GET /api/businesses/categories)
-   Returns list of unique categories from businesses table.
-   ─────────────────────────────── */
-router.get("/categories", async (req, res) => {
+// שליפת כל העסקים
+// Get all businesses
+router.get("/", async (_req, res) => {
   try {
-    const [rows] = await db.query(
-      "SELECT DISTINCT category FROM businesses WHERE category IS NOT NULL AND category != '' ORDER BY category ASC"
-    );
-    const categories = rows.map(row => row.category);
-    res.json(categories);
-  } catch (err) {
-    console.error("DB error fetching categories:", err);
-    res.status(500).json({ error: "Failed to fetch categories." });
-  }
-});
-
-/* ───────────────────────────────
-   3. Get all businesses (GET /api/businesses)
-   Refactored with async/await.
-   ─────────────────────────────── */
-router.get("/", async (_req, res) => { // <-- Add async
-  try {
-    const [rows] = await db.query("SELECT * FROM businesses"); // <-- Use await
+    const [rows] = await db.query("SELECT * FROM businesses");
     res.json(rows);
   } catch (err) {
-    console.error("DB error fetching all businesses:", err);
+    // שגיאה בשליפת עסקים
+    // Error fetching businesses
+    console.error("DB error fetching businesses:", err);
     res.status(500).json({ error: "Failed to fetch businesses." });
   }
 });
 
-/* ───────────────────────────────
-   4. Get a single business by ID (GET /api/businesses/:id)
-   Refactored with async/await.
-   ─────────────────────────────── */
-router.get("/:id", async (req, res) => { // <-- Add async
-  const sql = "SELECT * FROM businesses WHERE business_id = ?";
-  const params = [req.params.id];
-
+// שליפת עסק בודד לפי מזהה
+// Get a single business by ID
+router.get("/:id", async (req, res) => {
   try {
-    const [rows] = await db.query(sql, params); // <-- Use await
-    
-    // Check if a business was found
+    const [rows] = await db.query(
+      "SELECT * FROM businesses WHERE business_id = ?",
+      [req.params.id]
+    );
     if (rows.length === 0) {
+      // עסק לא נמצא
+      // Business not found
       return res.status(404).json({ message: "Business not found" });
     }
-    
-    res.json(rows[0]); // Send the first (and only) result
+    res.json(rows[0]);
   } catch (err) {
-    console.error(`DB error fetching business with id ${req.params.id}:`, err);
-    res.status(500).json({ error: "Failed to fetch business details." });
+    // שגיאה בשליפת עסק
+    // Error fetching business
+    console.error("DB error fetching business:", err);
+    res.status(500).json({ error: "Failed to fetch business." });
   }
 });
 
-/* ───────────────────────────────
-   5. Update a business (PUT /api/businesses/:id)
-   Refactored with async/await.
-   ─────────────────────────────── */
-router.put("/:id", async (req, res) => { // <-- Add async
-  const {
-    name, category, description, phone, email, address, image_url = "", opening_hours = "",
+// עדכון עסק קיים
+// Update existing business
+router.put("/:id", async (req, res) => {
+  const businessId = req.params.id;
+  let {
+    name,
+    category,
+    description,
+    location,
+    phone,
+    photos = "[]",
+    schedule = null,
+    email = null,
+    owner_id, // ייתכן ולא נשלח בכלל!
   } = req.body;
 
+  // שליפת עסק קיים
+  // Fetch existing business
+  let existingBusiness;
+  try {
+    const [rows] = await db.query(
+      "SELECT * FROM businesses WHERE business_id = ?",
+      [businessId]
+    );
+    if (rows.length === 0) {
+      // עסק לא נמצא
+      // Business not found
+      return res.status(404).json({ error: "Business not found" });
+    }
+    existingBusiness = rows[0];
+  } catch (err) {
+    // שגיאה בשליפת עסק
+    // Error fetching business
+    console.error("DB error fetching business:", err);
+    return res.status(500).json({ error: "Failed to fetch business." });
+  }
+
+  // שמור על owner_id קיים אם לא הגיע מהקליינט
+  // Keep the existing owner_id if not sent from client
+  if (!owner_id) {
+    owner_id = existingBusiness.owner_id;
+  }
+
+  // אם schedule/email ריק, הפוך ל־null
+  // If schedule/email empty, set to null
+  if (!schedule || schedule === "") schedule = null;
+  if (!email || email === "") email = null;
+
   const sql = `
-    UPDATE businesses SET name = ?, category = ?, description = ?, phone = ?, email = ?,
-    address = ?, image_url = ?, opening_hours = ?
+    UPDATE businesses
+    SET name = ?, category = ?, description = ?, location = ?, phone = ?, photos = ?, schedule = ?, email = ?, owner_id = ?
     WHERE business_id = ?
   `;
-  const params = [name, category, description, phone, email, address, image_url, opening_hours, req.params.id];
+  const params = [
+    name,
+    category,
+    description,
+    location,
+    phone,
+    photos,
+    schedule,
+    email,
+    owner_id,
+    businessId,
+  ];
 
   try {
-    const [result] = await db.query(sql, params); // <-- Use await
-    
-    // Check if any row was actually updated
+    const [result] = await db.query(sql, params);
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Business not found" });
+      // עסק לא נמצא
+      // Business not found
+      return res.status(404).json({ error: "Business not found" });
     }
-    
+    // עדכון בוצע בהצלחה
+    // Update successful
     res.json({ message: "Business updated successfully" });
   } catch (err) {
-    console.error(`DB error updating business with id ${req.params.id}:`, err);
+    // שגיאה בעדכון עסק
+    // Error updating business
+    console.error("DB error updating business:", err);
     res.status(500).json({ error: "Failed to update business." });
   }
 });
 
-
-/* ───────────────────────────────
-   6. Get services for a specific business (GET /api/businesses/:id/services)
-   Returns list of services for a specific business.
-   ─────────────────────────────── */
-router.get("/:id/services", async (req, res) => {
+// מחיקת עסק
+// Delete a business
+router.delete("/:id", async (req, res) => {
   try {
-    // First check if business exists
-    const [businessRows] = await db.query(
-      "SELECT business_id FROM businesses WHERE business_id = ?",
-      [req.params.id]
-    );
-    
-    if (businessRows.length === 0) {
-      return res.status(404).json({ error: "Business not found" });
-    }
-
-    // Fetch services for this business - using correct column name from database
-    const [services] = await db.query(
-      "SELECT service_id, name, description, price, duration_minutes as duration FROM services WHERE business_id = ? ORDER BY name ASC",
-      [req.params.id]
-    );
-    
-    res.json(services);
-  } catch (err) {
-    console.error(`DB error fetching services for business ${req.params.id}:`, err);
-    res.status(500).json({ error: "Failed to fetch services." });
-  }
-});
-
-/* ───────────────────────────────
-   7. Create a service for a business (POST /api/businesses/:id/services)
-   Creates a new service for a specific business.
-   ─────────────────────────────── */
-router.post("/:id/services", async (req, res) => {
-  const { name, description, price, duration } = req.body;
-  
-  if (!name || !price) {
-    return res.status(400).json({ error: "Name and price are required" });
-  }
-
-  try {
-    // First check if business exists
-    const [businessRows] = await db.query(
-      "SELECT business_id FROM businesses WHERE business_id = ?",
-      [req.params.id]
-    );
-    
-    if (businessRows.length === 0) {
-      return res.status(404).json({ error: "Business not found" });
-    }
-
-    // Create the service - using correct column name from database
     const [result] = await db.query(
-      "INSERT INTO services (business_id, name, description, price, duration_minutes) VALUES (?, ?, ?, ?, ?)",
-      [req.params.id, name, description || '', price, duration || null]
+      "DELETE FROM businesses WHERE business_id = ?",
+      [req.params.id]
     );
-    
-    res.status(201).json({
-      service_id: result.insertId,
-      business_id: req.params.id,
-      name,
-      description: description || '',
-      price,
-      duration: duration || null,
-      message: "Service created successfully"
-    });
+    if (result.affectedRows === 0) {
+      // עסק לא נמצא
+      // Business not found
+      return res.status(404).json({ error: "עסק לא נמצא" });
+    }
+    // מחיקת עסק בוצעה בהצלחה
+    // Business deleted successfully
+    res.json({ message: "העסק נמחק בהצלחה" });
   } catch (err) {
-    console.error(`DB error creating service for business ${req.params.id}:`, err);
-    res.status(500).json({ error: "Failed to create service." });
+    // שגיאה במחיקת עסק
+    // Error deleting business
+    console.error("DB error deleting business:", err);
+    res.status(500).json({ error: "שגיאה במחיקת עסק" });
   }
 });
 
+// ייצוא הראוטר לקובץ הראשי
+// Export router for main app
 module.exports = router;
