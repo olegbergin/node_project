@@ -1,4 +1,6 @@
-// src/App.jsx (Refactored for Academic Requirements)
+// src/App.jsx 
+// oleg bergin stefani kazmirchuk
+// Project: Business Management System
 
 // --- Imports ---
 import React, { useState, useEffect } from 'react';
